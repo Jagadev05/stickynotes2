@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sticky notes</title>
+  <style>
+    :root{
+      --note-w: 200px;
+      --note-h: 200px;
+      --control-bg: rgba(0,0,0,0.5);
+    }
+    html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;overflow:hidden;}
+    body{
+      background:url('https://images.unsplash.com/photo-1444703686981-a3abbc4d4fe3?auto=format&fit=crop&w=1920&q=80') no-repeat center center fixed;
+      background-size:cover;
+      color:white;
+      display:flex;flex-direction:column;
+    }
+
+    header{display:flex;gap:.5rem;align-items:center;padding:12px;background:var(--control-bg);backdrop-filter:blur(10px);box-shadow:0 2px 6px rgba(0,0,0,.5)}
+    header h1{font-size:1rem;margin:0;color:#fff}
+    .controls{margin-left:auto;display:flex;gap:.4rem;align-items:center}
+    button,select,input[type=color]{padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,0.2);color:white;cursor:pointer}
+    button:active{transform:translateY(1px)}
+
+    #wall{flex:1;position:relative;overflow:auto;padding:20px;border-top:1px solid rgba(255,255,255,.1)}
+    .note{position:absolute;width:var(--note-w);min-width:140px;height:var(--note-h);backdrop-filter:blur(12px);background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.3);box-shadow:0 8px 25px rgba(0,0,0,.6);border-radius:12px;padding:10px;display:flex;flex-direction:column;transition:transform .2s ease,box-shadow .2s ease;}
+    .note:hover{transform:scale(1.03);box-shadow:0 10px 30px rgba(0,0,0,.7)}
+    .note .bar{display:flex;gap:.4rem;align-items:center;user-select:none;color:#fff}
+    .handle{flex:1;cursor:grab;font-weight:600}
+    .note .actions{display:flex;gap:.3rem}
+    .note button{padding:6px;border-radius:6px;font-size:.9rem;background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3)}
+    .note button:hover{background:rgba(255,255,255,0.4)}
+    .note .content{flex:1;margin-top:8px;overflow:auto;outline:none;border-radius:4px;padding:6px;background:rgba(0,0,0,0.2);color:#fff;}
+    .note .content[contenteditable="true"]{background:rgba(255,255,255,0.3);color:#000;}
+    .note .delete{background:rgba(255,0,0,0.2)}
+    .note .color-picker{width:28px;height:28px;border-radius:6px;padding:0;border:1px solid rgba(255,255,255,0.5)}
+
+    footer{padding:8px 12px;font-size:.85rem;color:#ddd;background:rgba(0,0,0,0.5);backdrop-filter:blur(6px)}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Sticky Notes Wall</h1>
+    <div class="controls">
+      <label for="color">Default:</label>
+      <input id="defaultColor" type="color" value="#a3e0ff" title="Default note glow color">
+      <button id="addNote">+ Add Note</button>
+      <button id="clearAll">Clear All</button>
+    </div>
+  </header>
+
+  <main id="wall" aria-label="Sticky notes wall"></main>
+
+  <footer>Drag notes to move. Double-click a note body to edit. Change colors or delete anytime. Notes save automatically.</footer>
+
+  <script>
+    (function(){
+      const wall = document.getElementById('wall');
+      const addBtn = document.getElementById('addNote');
+      const clearBtn = document.getElementById('clearAll');
+      const defaultColorInput = document.getElementById('defaultColor');
+
+      let notes = {}; let topZ = 1;
+
+      function uid(){return 'n_'+Math.random().toString(36).slice(2,9)}
+      function save(){ localStorage.setItem('galaxy_sticky_v1', JSON.stringify({notes,topZ})); }
+      function load(){
+        try{
+          const raw = localStorage.getItem('galaxy_sticky_v1');
+          if(!raw) return;
+          const parsed = JSON.parse(raw);
+          notes = parsed.notes || {}; topZ = parsed.topZ || 1;
+          Object.values(notes).forEach(renderNote);
+        }catch(e){console.error('load failed',e)}
+      }
+
+      function renderNote(data){
+        if(document.getElementById(data.id)) return;
+        const el = document.createElement('div');
+        el.className = 'note';
+        el.id = data.id;
+        el.style.left = (data.x || 50) + 'px';
+        el.style.top = (data.y || 50) + 'px';
+        el.style.zIndex = data.z || 1;
+        el.style.borderColor = data.color || defaultColorInput.value;
+        el.style.boxShadow = `0 0 15px ${data.color || defaultColorInput.value}`;
+
+        el.innerHTML = `
+          <div class="bar">
+            <div class="handle">Note</div>
+            <div class="actions">
+              <input class="color-picker" type="color" value="${data.color || defaultColorInput.value}" />
+              <button class="edit">✎</button>
+              <button class="delete">🗑</button>
+            </div>
+          </div>
+          <div class="content" tabindex="0" contenteditable="false">${escapeHtml(data.content || '')}</div>
+        `;
+
+        const handle = el.querySelector('.handle');
+        const del = el.querySelector('.delete');
+        const editBtn = el.querySelector('.edit');
+        const content = el.querySelector('.content');
+        const colorPicker = el.querySelector('.color-picker');
+
+        el.addEventListener('mousedown', ()=>{ el.style.zIndex = ++topZ; notes[data.id].z = topZ; save(); });
+
+        del.addEventListener('click', (e)=>{ e.stopPropagation(); delete notes[data.id]; el.remove(); save(); });
+
+        colorPicker.addEventListener('input', (e)=>{
+          const c = e.target.value;
+          el.style.borderColor = c;
+          el.style.boxShadow = `0 0 15px ${c}`;
+          notes[data.id].color = c; save();
+        });
+
+        function enableEdit(){ content.contentEditable = 'true'; content.focus(); }
+        function disableEdit(){ content.contentEditable = 'false'; notes[data.id].content = content.innerHTML; save(); }
+        editBtn.addEventListener('click',(e)=>{ e.stopPropagation(); if(content.isContentEditable) disableEdit(); else enableEdit(); });
+        content.addEventListener('dblclick', (e)=>{ e.stopPropagation(); enableEdit(); });
+        content.addEventListener('blur', ()=>{ if(content.isContentEditable){ disableEdit(); } });
+
+        makeDraggable(el, handle, (x,y)=>{ notes[data.id].x = x; notes[data.id].y = y; save(); });
+        wall.appendChild(el);
+      }
+
+      function createNote(x=60,y=60){
+        const id = uid();
+        const color = defaultColorInput.value;
+        const note = {id,x,y,z:++topZ,color,content:'Double-click to edit me'};
+        notes[id] = note;
+        renderNote(note);
+        save();
+      }
+
+      addBtn.addEventListener('click', ()=>createNote(60 + Math.random()*200,60 + Math.random()*200));
+      clearBtn.addEventListener('click', ()=>{ if(!confirm('Delete all notes?')) return; notes={};topZ=1;save();wall.innerHTML=''; });
+
+      function escapeHtml(s){ return (s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+      function makeDraggable(el, handle, onMove){
+        let dragging=false, offsetX=0,offsetY=0;
+        handle.addEventListener('mousedown', startDrag);
+        handle.addEventListener('touchstart', startDrag, {passive:false});
+
+        function startDrag(e){
+          e.preventDefault();
+          dragging = true;
+          const rect = el.getBoundingClientRect();
+          const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+          const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+          offsetX = clientX - rect.left;
+          offsetY = clientY - rect.top;
+          document.addEventListener('mousemove', onDrag);
+          document.addEventListener('mouseup', endDrag);
+          document.addEventListener('touchmove', onDrag, {passive:false});
+          document.addEventListener('touchend', endDrag);
+          el.style.zIndex = ++topZ;
+        }
+
+        function onDrag(e){
+          if(!dragging) return;
+          e.preventDefault();
+          const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+          const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+          const wallRect = wall.getBoundingClientRect();
+          let x = clientX - wallRect.left - offsetX + wall.scrollLeft;
+          let y = clientY - wallRect.top - offsetY + wall.scrollTop;
+          x = Math.max(0, Math.min(x, wall.scrollWidth - el.offsetWidth));
+          y = Math.max(0, Math.min(y, wall.scrollHeight - el.offsetHeight));
+          el.style.left = x + 'px'; el.style.top = y + 'px';
+          if(typeof onMove==='function') onMove(x,y);
+        }
+
+        function endDrag(){ dragging=false; document.removeEventListener('mousemove', onDrag); document.removeEventListener('mouseup', endDrag); document.removeEventListener('touchmove', onDrag); document.removeEventListener('touchend', endDrag); }
+      }
+
+      load(); if(Object.keys(notes).length === 0){ createNote(80,80); }
+    })();
+  </script>
+</body>
+</html>
